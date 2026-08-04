@@ -10,7 +10,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
     roc_auc_score, average_precision_score,
-    roc_curve, precision_recall_curve
+    roc_curve, precision_recall_curve,
+    balanced_accuracy_score
+
 )
 import matplotlib as mpl
 import re
