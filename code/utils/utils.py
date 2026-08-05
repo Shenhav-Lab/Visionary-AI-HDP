@@ -1,18 +1,13 @@
 import pandas as pd
 import pickle
 import os
-from sklearn.metrics import f1_score, confusion_matrix, roc_auc_score, roc_curve, auc, precision_recall_curve
-from sklearn.metrics import roc_auc_score, average_precision_score
-from sklearn.metrics import confusion_matrix
 from scipy.stats import sem
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
     roc_auc_score, average_precision_score,
     roc_curve, precision_recall_curve,
     balanced_accuracy_score
-
 )
 import matplotlib as mpl
 import re
@@ -21,9 +16,7 @@ import textwrap
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from statannotations.Annotator import Annotator
-
-from scipy.stats import fisher_exact, mannwhitneyu,chi2_contingency,ttest_ind
-
+from scipy.stats import fisher_exact, mannwhitneyu, chi2_contingency, ttest_ind
 
 
 mpl.rcParams['pdf.fonttype'] = 42
@@ -445,6 +438,7 @@ bl_clean = {
     "old_tree_feats_diameter_Logistic_Regression": "Vessel Thickness Shift LR"
 }
 
+
 bl_to_cat = {
     'tda_outward_Random_Forest': 'Complexity',
     'tda_outward_XGBoost': 'Complexity',
@@ -658,7 +652,6 @@ def get_test_feat_imp(data_name, run, n_pop, model_type,
     plt.show()
 
 
-
 def average_by_subject(df, ids_to_use=None,filename_to_use=None, id_regex=r"(cu\d{4})", average=True):
     """
     If a subject has both eyes, we average their features.
@@ -706,7 +699,6 @@ def get_pca_df(chosen_df, n_comps=2, get_pca=False, subset_fit=[]):
         X_fit = X_fit.apply(pd.to_numeric, errors='coerce')        
         X_fit.replace([np.inf, -np.inf], np.nan, inplace=True) 
         X_fit = X_fit.fillna(0)                                    
-        # Optional (your original intent): zero tiny values
         X_fit = X_fit.where(X_fit >= 1e-6, 0)
         scaler = StandardScaler()
         chosen_df_scaled_fit = scaler.fit_transform(X_fit)
@@ -721,7 +713,6 @@ def get_pca_df(chosen_df, n_comps=2, get_pca=False, subset_fit=[]):
     X = X.apply(pd.to_numeric, errors='coerce')        
     X.replace([np.inf, -np.inf], np.nan, inplace=True) 
     X = X.fillna(0)                                    
-    # Optional (your original intent): zero tiny values
     X = X.where(X >= 1e-6, 0)
 
     if len(subset_fit)>0:
@@ -736,7 +727,7 @@ def get_pca_df(chosen_df, n_comps=2, get_pca=False, subset_fit=[]):
         pca = PCA(n_components=n, random_state=0)
         chosen_df_scaled = pca.fit_transform(chosen_df_scaled)
 
-    # keep your original structure/variable names
+    # keep original structure/variable names
     chosen_df_scaled = pd.DataFrame(chosen_df_scaled, index=chosen_df.index)
     chosen_df_scaled['id'] = chosen_df['id'].tolist() if 'id' in chosen_df.columns else None
     chosen_df_scaled['file_name'] = chosen_df['file_name'].tolist() if 'file_name' in chosen_df.columns else None
@@ -884,7 +875,7 @@ def prepare_feature_catalog(
       - df_use (with labels)
     """
 
-    # base labels / subject filtering 
+    # base labels/subject filtering 
     df_results_all = pd.read_csv(os.path.join(feature_folder, f"{pre}_graph_feats_processed{post}.csv"))
     df_results_all['id'] = df_results_all['id'].astype(str).str.lower()
 
@@ -898,7 +889,6 @@ def prepare_feature_catalog(
     case_group = [x.lower() for x in case_group]
     control_group = [x.lower() for x in control_group]
 
-    # df_use = df_results_all[df_results_all['id'].isin(case_group + control_group)].copy()
     df_use = df_results_all.copy()
     df_use['label'] = df_use['id'].apply(lambda x: 1 if x in case_group else 0)
     df_use = df_use.dropna()
@@ -929,7 +919,6 @@ def prepare_feature_catalog(
     old_tree_feats_assymetry = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_old_Asymmetry{post}.csv"))
     old_tree_feats_diameter  = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_old_diameters{post}.csv"))
 
-    # processed_dan_tree_feats = pd.read_csv(os.path.join(feature_folder, f"all_t1_tree_feats_dan_processed.csv")) ## need to be changed if using new!
     processed_dan_tree_feats = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_processed{post}.csv")) 
 
 
@@ -939,8 +928,6 @@ def prepare_feature_catalog(
     clinical_feats['id'] = clinical_feats['Study ID'].str.lower()
     clinical_feats['file_name'] = clinical_feats['id']
     clinical_feats['label'] = [1 if x in case_group else 0 for x in clinical_feats['id']]
-
-
 
     # column groups 
     required = ['file_name', 'label', 'id']
@@ -988,7 +975,6 @@ def prepare_feature_catalog(
        'Past Gestational diabetes', 'Past Preterm Labor', 'nulliparous']
     
     mixed_feat_set = ['n_branches','direct_dist','sq_curvature_tortuosity','loops','fds','avg_topo_length_top_dan','avg_topo_length_bottom_dan']
-    # clinical_feats_extra2 = ['ama', 'obesity', 'Diabetes', 'Past Gestational HTN', 'Past Gestational diabetes', 'Past Hypertension']
 
     # append required
     def add_req(lst): return lst + required
@@ -1091,7 +1077,7 @@ def prepare_feature_catalog(
         'all_clinical_feats': all_clinical_feats
     }
 
-    # Build maps consistent with string keys you already use
+    # Build maps consistent with string keys
     dfs_map = {}
     for name in dfs:
         if '[' in name:        # e.g., 'graph_feats[graph_cols]'
@@ -1115,8 +1101,10 @@ def prepare_feature_catalog(
     }
 
 
-# create binary column in metadata from column that hold list of diseases per subject
 def create_disease_binary_columns(df, disease_column):
+    """
+    create binary column in metadata from column that hold list of diseases per subject
+    """
     df = df.copy()
     # Ensure the disease column is processed as a list if it's a string
     if df[disease_column].dtype == 'object':
@@ -1139,6 +1127,7 @@ def create_disease_binary_columns(df, disease_column):
         )
     
     return df
+
 
 def prepare_clinical_file(md):
     md['Study ID'] = md['Study ID'].str.lower()
@@ -1172,8 +1161,6 @@ def prepare_clinical_file(md):
     md_select = md_select.rename(columns={'Tobacco Use_currentsmoker':'Current Smoker','Tobacco Use_formersmoker':'Former Smoker',
                                         'diag_mat_ivf':'IVF','diag_mat_ama':'ama','med_diag_obesity':'obesity'})
     md_select = md_select.loc[:, ~md_select.columns.duplicated()]
-    # display(md_select)
-    # display(md_select['Past Preeclampsia'])
     md_select['Past Preeclampsia'] = md_select['Past Pregnancies Diagnoses, Maternal, Hypertension'].apply(lambda x: 1 if x=='Preeclampsia' else 0)
     md_select['Maternal hispanic'] = md_select['Maternal Ethnicity'].map({
         'Hispanic or Latinx': 1,
@@ -1199,6 +1186,7 @@ def prepare_clinical_file(md):
     md_select = md_select.drop(['Maternal Ethnicity','Maternal Race','Cardiac Disease','Diabetes Mellitus','Past Pregnancies Diagnoses, Maternal, Hypertension','Past Pregnancies Diagnoses, Maternal'],axis=1)
 
     return(md_select)
+
 
 def prepare_clinical_file_fmf(md):
     md['Study ID'] = md['Study ID'].str.lower()
@@ -1258,7 +1246,6 @@ def prepare_clinical_file_fmf(md):
     return(md_select)
 
 
-
 def get_vals(md, col, sets, get_sd=False, round_to=3, compare_to='pw_controls'):
     subj_means = {}
     subj_sds = {}
@@ -1280,13 +1267,13 @@ def get_vals(md, col, sets, get_sd=False, round_to=3, compare_to='pw_controls'):
             print(f"{subj_set}: {mean_val:.{round_to}f}")
 
 
-    # Compare each group against the pw_controls group
+    # compare each group against the pw_controls group
     for subj_set in sets.keys():
         if subj_set not in ['cohort', 'pw_controls', 'clean controls']:
             group_vals = subj_vals[subj_set]
             control_vals = subj_vals[compare_to]
 
-            # Independent t-test (assumes unequal variances by default)
+            # independent t-test (assumes unequal variances by default)
             t_stat, p_val = mannwhitneyu(group_vals, control_vals, nan_policy='omit')
 
             print(f"{subj_set} vs {compare_to}: t = {t_stat:.3f}, p = {p_val}")
@@ -1316,6 +1303,7 @@ def get_vals_count_card(md, col, sets, get_sd=False, compare_to='pw_controls'):
             chi2, p, dof, expected = chi2_contingency(table)
             print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
 
+
 def get_vals_past_pec(md, col, sets, get_sd=False, compare_to='pw_controls'):
     subj_counts = {}
     subj_total = {}
@@ -1339,6 +1327,7 @@ def get_vals_past_pec(md, col, sets, get_sd=False, compare_to='pw_controls'):
             chi2, p, dof, expected = chi2_contingency(table)
             print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
 
+
 def get_vals_count_smoker(md, col, sets, get_sd=False, compare_to='pw_controls'):
     subj_counts = {}
     subj_total = {}
@@ -1361,6 +1350,7 @@ def get_vals_count_smoker(md, col, sets, get_sd=False, compare_to='pw_controls')
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
             print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
 
 def get_vals_count_ethnicity(md, col, sets, get_sd=False, compare_to='pw_controls'):
     subj_counts = {}
@@ -1409,6 +1399,7 @@ def get_vals_count_db(md, col, sets, get_sd=False, compare_to='pw_controls'):
             chi2, p, dof, expected = chi2_contingency(table)
             print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
 
+
 def get_vals_count_diagmat(md, col, sets, get_sd=False, compare_to='pw_controls'):
     subj_counts = {}
     subj_total = {}
@@ -1432,6 +1423,7 @@ def get_vals_count_diagmat(md, col, sets, get_sd=False, compare_to='pw_controls'
             chi2, p, dof, expected = chi2_contingency(table)
             print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
 
+
 def get_vals_count_meddiag(md, col, sets, get_sd=False, compare_to='pw_controls'):
     subj_counts = {}
     subj_total = {}
@@ -1454,6 +1446,7 @@ def get_vals_count_meddiag(md, col, sets, get_sd=False, compare_to='pw_controls'
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
             print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
 
 def get_vals_count_np(md, col, sets, get_sd=False, compare_to='pw_controls'):
     subj_counts = {}
@@ -1479,10 +1472,10 @@ def get_vals_count_np(md, col, sets, get_sd=False, compare_to='pw_controls'):
             print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
 
 
-
 def get_bmi(df: pd.DataFrame, weight_col: str, height_col: str) -> pd.DataFrame:
     df['bmi'] = df[weight_col]/(df[height_col]**2)
     return(df)
+
 
 def proc_birth_hx(df: pd.DataFrame, col: str) -> pd.DataFrame:
     def parse(x):
@@ -1498,13 +1491,13 @@ def proc_birth_hx(df: pd.DataFrame, col: str) -> pd.DataFrame:
             elif 'ghtn' in x.lower():
                 return(3)
                
-        
     df[col] = df[col].apply(parse)
     df['Past Preeclampsia'] = df[col].apply(lambda x: 1 if x==1 else 0)
     df['Past Gestational HTN'] = df[col].apply(lambda x: 1 if x==3 else 0)
     df['Past Gestational diabetes'] = df[col].apply(lambda x: 1 if x==2 else 0)
     
     return df
+
 
 def proc_on_yes(df: pd.DataFrame, col: str) -> pd.DataFrame:
     def parse(x):
@@ -1519,6 +1512,7 @@ def proc_on_yes(df: pd.DataFrame, col: str) -> pd.DataFrame:
     df[col] = df[col].apply(parse)
     return df  
 
+
 def proc_on_no(df: pd.DataFrame, col: str) -> pd.DataFrame:
     def parse(x):
         if pd.isna(x):
@@ -1532,9 +1526,11 @@ def proc_on_no(df: pd.DataFrame, col: str) -> pd.DataFrame:
     df[col] = df[col].apply(parse)
     return df
 
+
 def proc_smoker(df: pd.DataFrame, col: str) -> pd.DataFrame:
     df[col] = df[col].apply(lambda x: 1 if 'former' in x.lower() else 0)
     return df
+
 
 def proc_db(df: pd.DataFrame, col: str) -> pd.DataFrame:
     
@@ -1550,13 +1546,13 @@ def proc_db(df: pd.DataFrame, col: str) -> pd.DataFrame:
                 return 0
         
     df[col] = df[col].apply(parse)
-#     df['Diabetes_type1'] = df[col].apply(lambda x: 1 if x==1 else 0)
-#     df['Diabetes_type2'] = df[col].apply(lambda x: 1 if x==2 else 0)
     return(df)
+
 
 def proc_conception(df: pd.DataFrame, col: str) -> pd.DataFrame:
     df['IVF'] = df[col].apply(lambda x: 1 if 'ivf' in x.lower() and 'natural' not in x.lower() else 0)
     return df    
+
 
 def compare_binary_col(
     nyu_md,
@@ -1566,8 +1562,6 @@ def compare_binary_col(
     id_col="Record ID"
 ):
     """
-    Parameters
-    ----------
     nyu_md : DataFrame
     col : str
         Binary column to compare.
@@ -1618,8 +1612,6 @@ def compare_continuous_col(
     """
     Compare a continuous column between control and each group.
 
-    Parameters
-    ----------
     nyu_md : DataFrame
     col : str
         Continuous column to compare.
@@ -1675,19 +1667,18 @@ def compare_continuous_col(
 
     return pd.DataFrame(results)
 
+
 def classification_metrics(cases_pos, cases_neg, controls_pos, controls_neg):
     """
     Compute classification metrics from case/control predicted counts.
  
     Parameters
-    ----------
     cases_pos    : int | float  — cases predicted positive    (True Positives)
     cases_neg    : int | float  — cases predicted negative    (False Negatives)
     controls_pos : int | float  — controls predicted positive (False Positives)
     controls_neg : int | float  — controls predicted negative (True Negatives)
  
     Returns
-    -------
     dict with keys:
         TP, FP, TN, FN,
         TPR  (sensitivity / recall),
@@ -1825,6 +1816,7 @@ def add_ethnicity_binaries(df: pd.DataFrame, col: str) -> pd.DataFrame:
     df['Maternal hispanic'] = (ethnicity == 'hispanic').astype(int)
 
     return df
+
 
 def get_ama(df: pd.DataFrame, col: str) -> pd.DataFrame:
     df['ama'] = (df[col] > 35.).astype(int)
