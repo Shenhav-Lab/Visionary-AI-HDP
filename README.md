@@ -1,8 +1,5 @@
 # Visionary AI for Hypertensive Disorders of Pregnancy
 
-## Enviorment
-
-
 ## Repo Structure
 ```
 Visionary-AI-HDP/                               repo
