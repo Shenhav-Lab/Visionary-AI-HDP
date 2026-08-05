@@ -33,7 +33,7 @@ Visionary-AI-HDP/                               repo
 │   │   ├── supplementary_figure_6.ipynb        uses env1
 │   │   ├── supplementary_figure_7.ipynb        uses env1
 │   │   ├── supplementary_figure_8.ipynb        uses env1
-│   │   ├── supplementary_figure_9_10_11.ipynb
+│   │   ├── supplementary_figure_9_10_11.ipynb  uses env1
 │   │   ├── supplementary_figure_12.ipynb       uses vsi_gen
 │   │   ├── supplementary_table_1.ipynb         uses env1
 │   │   ├── supplementary_table_2.ipynb         uses env1
@@ -41,12 +41,13 @@ Visionary-AI-HDP/                               repo
 │   │   ├── supplementary_table_4.ipynb         uses env1
 │   │   ├── supplementary_table_5.ipynb         uses env1
 │   │   ├── supplementary_table_6.ipynb
-│   │   └── supplementary_table_7.ipynb        uses env1
-│   └── utils/                                 code utilities
+│   │   └── supplementary_table_7.ipynb         uses env1
+│   └── utils/                                  code utilities
 │       └── utils.py
-├── env/                                       environment requirement files
+├── env/                                        environment requirement files
 │   ├── env1.yml
-│   └── env1.txt
-└── README.md                                  info on repo
+│   ├── env1.txt
+│   └── vsi_gen.yaml
+└── README.md                                   info on repo
 ```
 
