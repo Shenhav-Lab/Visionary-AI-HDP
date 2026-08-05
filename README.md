@@ -25,7 +25,7 @@ Visionary-AI-HDP/                               repo
 │   │   ├── extended_data_table_3.ipynb         uses env1
 │   │   └── extended_data_table_4.ipynb         uses env1
 │   ├── supplementary/                          code for supplementary figures 1-12 and tables 1-7
-│   │   ├── supplementary_figure_1.ipynb        
+│   │   ├── supplementary_figure_1.ipynb        uses env1      
 │   │   ├── supplementary_figure_2.ipynb        uses env1
 │   │   ├── supplementary_figure_3.ipynb        uses env1
 │   │   ├── supplementary_figure_4.ipynb        uses env1
@@ -40,7 +40,7 @@ Visionary-AI-HDP/                               repo
 │   │   ├── supplementary_table_3.ipynb         uses env1
 │   │   ├── supplementary_table_4.ipynb         uses env1
 │   │   ├── supplementary_table_5.ipynb         uses env1
-│   │   ├── supplementary_table_6.ipynb
+│   │   ├── supplementary_table_6.ipynb         uses env1
 │   │   └── supplementary_table_7.ipynb         uses env1
 │   └── utils/                                  code utilities
 │       └── utils.py
