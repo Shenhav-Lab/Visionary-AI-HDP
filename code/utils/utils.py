@@ -789,7 +789,7 @@ def box_plot(input_df, name_map, pw_ids,pec_ids,clean_controls, get_mean=False, 
 
     df_ = remove_outliers_iqr(df, [yval])[0]
     df_[xval] = df_[xval].replace({0: 'HC', 1:'PEC', 2:'PW'})#, 3:'EOPE', 4:'LOPE'
-    sns.boxplot(df_, x=xval, y=yval, showfliers=False, saturation=0.9, palette=palette, order = ['HC','PW', 'PEC'], linecolor="black")
+    sns.boxplot(df_, x=xval, y=yval, showfliers=False, saturation=0.9, palette=palette,hue=xval, order = ['HC','PW', 'PEC'], linecolor="black")
     sns.stripplot(df_, x=xval, y=yval,color='black' , marker="$\circ$", alpha = 0.2, edgecolor='k', linewidth=0.6, order = ['HC','PW', 'PEC'], jitter=0.2, size=4)
 
     annotator = Annotator(ax = ax, data = df_, x = xval, y = yval, pairs = [('HC','PEC'), ('PW','PEC')], order = ['HC','PW', 'PEC'])
@@ -805,8 +805,7 @@ def box_plot(input_df, name_map, pw_ids,pec_ids,clean_controls, get_mean=False, 
     ax.set_ylabel(name_map[yval])
     if len(file_name)>0:
         fig.savefig(f'figures/{file_name}.png', transparent=True, dpi=300, bbox_inches='tight')   
-    else:
-        fig.savefig(f'figures/fig3_{yval}_color.pdf', transparent=True, dpi=300, bbox_inches='tight')
+
 
 def box_plot_hdp(input_df, name_map, pw_ids,ght_cases,cht_cases,clean_controls, get_mean=False, file_name=''):
     df = input_df.copy()
@@ -844,7 +843,7 @@ def box_plot_hdp(input_df, name_map, pw_ids,ght_cases,cht_cases,clean_controls, 
 
     df_ = remove_outliers_iqr(df, [yval])[0]
     df_[xval] = df_[xval].replace({0: 'HC', 1:'PW', 2:'CHTN', 3:'GHTN'})
-    sns.boxplot(df_, x=xval, y=yval, showfliers=False, saturation=0.9, palette=palette, order = ['HC','PW','GHTN','CHTN'], linecolor="black")#,'EOPE', 'LOPE'
+    sns.boxplot(df_, x=xval, y=yval, showfliers=False, saturation=0.9, palette=palette,hue=xval, order = ['HC','PW','GHTN','CHTN'], linecolor="black")#,'EOPE', 'LOPE'
     sns.stripplot(df_, x=xval, y=yval,color='black' , marker="$\circ$", alpha = 0.2, edgecolor='k', linewidth=0.6, order = ['HC','PW','GHTN','CHTN'], jitter=0.2, size=4)
     annotator = Annotator(ax = ax, data = df_, x = xval, y = yval, pairs = [('HC','GHTN'), ('PW','GHTN'),('HC','CHTN'), ('PW','CHTN')], order = ['HC','PW','GHTN','CHTN'])
     annotator.hide_non_significant=True
@@ -860,8 +859,7 @@ def box_plot_hdp(input_df, name_map, pw_ids,ght_cases,cht_cases,clean_controls, 
 
     if len(file_name)>0:
         fig.savefig(f'figures/{file_name}.pdf', transparent=True, dpi=300, bbox_inches='tight')   
-    else:
-        fig.savefig(f'figures/fig4_{yval}_color.pdf', transparent=True, dpi=300, bbox_inches='tight')
+
 
 def prepare_feature_catalog(
     case_file, control_file, clinical_file,
@@ -1278,6 +1276,15 @@ def get_vals(md, col, sets, get_sd=False, round_to=3, compare_to='pw_controls'):
 
             print(f"{subj_set} vs {compare_to}: t = {t_stat:.3f}, p = {p_val}")
 
+def print_ast(p_val):
+    if p_val > 0.05:
+        return('')
+    elif p_val > 0.01:
+        return('*')
+    elif p_val > 0.001:
+        return('**')
+    else:
+        return('***')
 
 def get_vals_count_card(md, col, sets, get_sd=False, compare_to='pw_controls'):
     subj_counts = {}
@@ -1294,14 +1301,15 @@ def get_vals_count_card(md, col, sets, get_sd=False, compare_to='pw_controls'):
         subj_total[subj_set] = len(subjects)
 
     for subj_set in sets.keys():
-        if subj_set not in ['cohort','pw_controls','clean controls']:
+        if subj_set not in ['cohort','pw_controls','clean controls','pw_controls_perf_opt']:
 
             table = pd.DataFrame({
                 "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
                 "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
-            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+            ast = print_ast(p)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p} {ast}")
 
 
 def get_vals_past_pec(md, col, sets, get_sd=False, compare_to='pw_controls'):
@@ -1318,14 +1326,15 @@ def get_vals_past_pec(md, col, sets, get_sd=False, compare_to='pw_controls'):
         subj_total[subj_set] = len(subjects)
 
     for subj_set in sets.keys():
-        if subj_set not in ['cohort','pw_controls','clean controls']:
+        if subj_set not in ['cohort','pw_controls','clean controls','pw_controls_perf_opt']:
 
             table = pd.DataFrame({
                 "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
                 "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
-            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+            ast = print_ast(p)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p} {ast}")
 
 
 def get_vals_count_smoker(md, col, sets, get_sd=False, compare_to='pw_controls'):
@@ -1342,14 +1351,16 @@ def get_vals_count_smoker(md, col, sets, get_sd=False, compare_to='pw_controls')
         subj_total[subj_set] = len(subjects)
 
     for subj_set in sets.keys():
-        if subj_set not in ['cohort','pw_controls','clean controls']:
+        if subj_set not in ['cohort','pw_controls','clean controls','pw_controls_perf_opt']:
 
             table = pd.DataFrame({
                 "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
                 "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
-            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+            ast = print_ast(p)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p} {ast}")
+
 
 
 def get_vals_count_ethnicity(md, col, sets, get_sd=False, compare_to='pw_controls'):
@@ -1366,14 +1377,15 @@ def get_vals_count_ethnicity(md, col, sets, get_sd=False, compare_to='pw_control
         subj_total[subj_set] = len(subjects)
 
     for subj_set in sets.keys():
-        if subj_set not in ['cohort','pw_controls','clean controls']:
+        if subj_set not in ['cohort','pw_controls','clean controls','pw_controls_perf_opt']:
 
             table = pd.DataFrame({
                 "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
                 "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
-            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+            ast = print_ast(p)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p} {ast}")
 
 
 def get_vals_count_db(md, col, sets, get_sd=False, compare_to='pw_controls'):
@@ -1390,14 +1402,15 @@ def get_vals_count_db(md, col, sets, get_sd=False, compare_to='pw_controls'):
         subj_total[subj_set] = len(subjects)
 
     for subj_set in sets.keys():
-        if subj_set not in ['cohort','pw_controls','clean controls']:
+        if subj_set not in ['cohort','pw_controls','clean controls','pw_controls_perf_opt']:
 
             table = pd.DataFrame({
                 "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
                 "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
-            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+            ast = print_ast(p)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p} {ast}")
 
 
 def get_vals_count_diagmat(md, col, sets, get_sd=False, compare_to='pw_controls'):
@@ -1414,14 +1427,15 @@ def get_vals_count_diagmat(md, col, sets, get_sd=False, compare_to='pw_controls'
         subj_total[subj_set] = len(subjects)
 
     for subj_set in sets.keys():
-        if subj_set not in ['cohort','pw_controls','clean controls']:
+        if subj_set not in ['cohort','pw_controls','clean controls','pw_controls_perf_opt']:
 
             table = pd.DataFrame({
                 "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
                 "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
-            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+            ast = print_ast(p)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p} {ast}")
 
 
 def get_vals_count_meddiag(md, col, sets, get_sd=False, compare_to='pw_controls'):
@@ -1438,14 +1452,15 @@ def get_vals_count_meddiag(md, col, sets, get_sd=False, compare_to='pw_controls'
         subj_total[subj_set] = len(subjects)
 
     for subj_set in sets.keys():
-        if subj_set not in ['cohort','pw_controls','clean controls']:
+        if subj_set not in ['cohort','pw_controls','clean controls','pw_controls_perf_opt']:
 
             table = pd.DataFrame({
                 "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
                 "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
-            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+            ast = print_ast(p)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p} {ast}")
 
 
 def get_vals_count_np(md, col, sets, get_sd=False, compare_to='pw_controls'):
@@ -1462,14 +1477,15 @@ def get_vals_count_np(md, col, sets, get_sd=False, compare_to='pw_controls'):
         subj_total[subj_set] = len(subjects)
 
     for subj_set in sets.keys():
-        if subj_set not in ['cohort','pw_controls','clean controls']:
+        if subj_set not in ['cohort','pw_controls','clean controls','pw_controls_perf_opt']:
 
             table = pd.DataFrame({
                 "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
                 "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
             }, index=["PEC", "Controls"])
             chi2, p, dof, expected = chi2_contingency(table)
-            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+            ast = print_ast(p)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p} {ast}")
 
 
 def get_bmi(df: pd.DataFrame, weight_col: str, height_col: str) -> pd.DataFrame:
