@@ -18,6 +18,12 @@ import matplotlib as mpl
 import re
 import seaborn as sns
 import textwrap
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from statannotations.Annotator import Annotator
+
+from scipy.stats import fisher_exact, mannwhitneyu,chi2_contingency,ttest_ind
+
 
 
 mpl.rcParams['pdf.fonttype'] = 42
@@ -651,3 +657,1176 @@ def get_test_feat_imp(data_name, run, n_pop, model_type,
     plt.savefig(save_path)
     plt.show()
 
+
+
+def average_by_subject(df, ids_to_use=None,filename_to_use=None, id_regex=r"(cu\d{4})", average=True):
+    """
+    If a subject has both eyes, we average their features.
+
+    Args:
+        df: df of data
+        ids_to_use: ids to apply this to
+        filename_to_use: filenames apply this to
+        id_regex: the format of the ids
+        average: if we ant to combine and average them
+    
+    Returns:
+        df with features averaged by subject.
+    """
+    df = df.copy()
+    if 'id' in df.columns:
+        pass
+    elif 'file_name' in df.columns:
+        df['id'] = df['file_name'].str.extract(id_regex)[0]
+    elif 'index' in df.columns:
+        df = df.rename(columns={'index': 'file_name'})
+        df['id'] = df['file_name'].str.extract(id_regex)[0]
+    if ids_to_use is not None:
+        df = df[df['id'].isin(ids_to_use)]
+    elif filename_to_use is not None:
+        if 'file_name' in df.columns:
+            df = df[df['file_name'].isin(filename_to_use)]
+
+    if average:
+
+        agg = {c: ('mean' if np.issubdtype(dt, np.number) else 'first')
+            for c, dt in df.dtypes.items() if c != 'file_name'}
+        g = df.groupby('id', as_index=False).agg(agg)
+        g['file_name'] = g['id']
+        return g
+    else:
+        return(df)
+
+
+
+def get_pca_df(chosen_df, n_comps=2, get_pca=False, subset_fit=[]):
+    if len(subset_fit)>0:
+        chosen_df_fit = chosen_df[chosen_df['id'].isin(subset_fit)]
+        X_fit = chosen_df_fit.drop(['file_name', 'label', 'id', 'lat'], axis=1, errors='ignore').copy()
+        X_fit = X_fit.apply(pd.to_numeric, errors='coerce')        
+        X_fit.replace([np.inf, -np.inf], np.nan, inplace=True) 
+        X_fit = X_fit.fillna(0)                                    
+        # Optional (your original intent): zero tiny values
+        X_fit = X_fit.where(X_fit >= 1e-6, 0)
+        scaler = StandardScaler()
+        chosen_df_scaled_fit = scaler.fit_transform(X_fit)
+        n = max(1, min(n_comps, chosen_df_scaled_fit.shape[0], chosen_df_scaled_fit.shape[1]))
+        pca = PCA(n_components=n, random_state=0)
+        pca.fit(chosen_df_scaled_fit)
+
+
+    X = chosen_df.drop(['file_name', 'label', 'id', 'lat'], axis=1, errors='ignore').copy()
+
+    # make sure everything going into scaler/PCA is numeric and clean
+    X = X.apply(pd.to_numeric, errors='coerce')        
+    X.replace([np.inf, -np.inf], np.nan, inplace=True) 
+    X = X.fillna(0)                                    
+    # Optional (your original intent): zero tiny values
+    X = X.where(X >= 1e-6, 0)
+
+    if len(subset_fit)>0:
+        chosen_df_scaled = scaler.transform(X)
+        chosen_df_scaled = pca.transform(chosen_df_scaled)
+    else:
+        scaler = StandardScaler()
+        chosen_df_scaled = scaler.fit_transform(X)
+
+        # cap n_comps to valid range
+        n = max(1, min(n_comps, chosen_df_scaled.shape[0], chosen_df_scaled.shape[1]))
+        pca = PCA(n_components=n, random_state=0)
+        chosen_df_scaled = pca.fit_transform(chosen_df_scaled)
+
+    # keep your original structure/variable names
+    chosen_df_scaled = pd.DataFrame(chosen_df_scaled, index=chosen_df.index)
+    chosen_df_scaled['id'] = chosen_df['id'].tolist() if 'id' in chosen_df.columns else None
+    chosen_df_scaled['file_name'] = chosen_df['file_name'].tolist() if 'file_name' in chosen_df.columns else None
+    chosen_df_scaled['label'] = chosen_df['label'].tolist() if 'label' in chosen_df.columns else None
+
+    chosen_df = chosen_df_scaled
+    if get_pca:
+        return chosen_df, pca
+    else:
+        return chosen_df
+
+# remove outliers outside of 4*IQR
+def remove_outliers_iqr(df, cols=[], iqr_mult=4):
+    cleaned = df.copy()
+    for col in cols:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower = Q1 - iqr_mult * IQR
+        upper = Q3 + iqr_mult * IQR
+        cleaned = cleaned[(cleaned[col] >= lower) & (cleaned[col] <= upper)]
+        outliers = df[(df[col] < lower) | (df[col] > upper)]['id'].tolist()
+    return cleaned, outliers
+
+
+def box_plot(input_df, name_map, pw_ids,pec_ids,clean_controls, get_mean=False, file_name=''):
+    df = input_df.copy()
+    df = df[df['id'].isin(pec_ids + pw_ids)]  # keep relevant subjects
+
+
+    # Build category mapping (each subject can belong to multiple groups)
+    category_map = {
+        'PEC': set(pec_ids),
+        'HC': set(clean_controls),
+        'PW': set(pw_ids),
+    }
+
+    # Expand df so that subjects with multiple memberships get duplicated
+    df_expanded = []
+    for _, row in df.iterrows():
+        subject_id = row['id']
+        for label, id_set in category_map.items():
+            if subject_id in id_set:
+                new_row = row.copy()
+                new_row['label'] = label
+                df_expanded.append(new_row)
+    df = pd.DataFrame(df_expanded)
+
+    palette = {'PEC':'#FF0044', 'HC': 'whitesmoke', 'PW':'lightgrey'}
+
+    xval = 'label'
+    yval = list(name_map.keys())[0]
+
+    if get_mean:
+        if f'{yval}' not in df.columns:
+            df[f'{yval}'] = df.filter(like='cu').mean(axis=1)
+
+    fig, ax = plt.subplots(figsize = (2.5, 4), constrained_layout=True)
+
+    df_ = remove_outliers_iqr(df, [yval])[0]
+    df_[xval] = df_[xval].replace({0: 'HC', 1:'PEC', 2:'PW'})#, 3:'EOPE', 4:'LOPE'
+    sns.boxplot(df_, x=xval, y=yval, showfliers=False, saturation=0.9, palette=palette, order = ['HC','PW', 'PEC'], linecolor="black")
+    sns.stripplot(df_, x=xval, y=yval,color='black' , marker="$\circ$", alpha = 0.2, edgecolor='k', linewidth=0.6, order = ['HC','PW', 'PEC'], jitter=0.2, size=4)
+
+    annotator = Annotator(ax = ax, data = df_, x = xval, y = yval, pairs = [('HC','PEC'), ('PW','PEC')], order = ['HC','PW', 'PEC'])
+    annotator.hide_non_significant=True
+    annotator.configure(test="Mann-Whitney", verbose=False,line_height=0.02, text_offset=-2,text_format='star',use_fixed_offset=10)
+
+    annotator.apply_test()
+
+    annotator.annotate(line_offset_to_group=0.01)
+
+    ax.tick_params(axis='y', which='major', labelsize=9)
+    ax.set_xlabel('')
+    ax.set_ylabel(name_map[yval])
+    if len(file_name)>0:
+        fig.savefig(f'figures/{file_name}.png', transparent=True, dpi=300, bbox_inches='tight')   
+    else:
+        fig.savefig(f'figures/fig3_{yval}_color.pdf', transparent=True, dpi=300, bbox_inches='tight')
+
+def box_plot_hdp(input_df, name_map, pw_ids,ght_cases,cht_cases,clean_controls, get_mean=False, file_name=''):
+    df = input_df.copy()
+    df = df[df['id'].isin(ght_cases+cht_cases + pw_ids)]  # keep relevant subjects
+
+    # Build category mapping (each subject can belong to multiple groups)
+    category_map = {
+        'GHTN': set(ght_cases),
+        'CHTN': set(cht_cases),
+        'HC': set(clean_controls),
+        'PW': set(pw_ids)
+    }
+
+    # Expand df so that subjects with multiple memberships get duplicated
+    df_expanded = []
+    for _, row in df.iterrows():
+        subject_id = row['id']
+        for label, id_set in category_map.items():
+            if subject_id in id_set:
+                new_row = row.copy()
+                new_row['label'] = label
+                df_expanded.append(new_row)
+    df = pd.DataFrame(df_expanded)
+
+    palette = {'CHTN':'darkorchid','GHTN':'cornflowerblue', 'HC': 'whitesmoke', 'PW':'lightgrey'}
+
+    xval = 'label'
+    yval = list(name_map.keys())[0]
+
+    if get_mean:
+        if f'{yval}' not in df.columns:
+            df[f'{yval}'] = df.filter(like='cu').mean(axis=1)
+
+    fig, ax = plt.subplots(figsize = (4, 4), constrained_layout=True)
+
+    df_ = remove_outliers_iqr(df, [yval])[0]
+    df_[xval] = df_[xval].replace({0: 'HC', 1:'PW', 2:'CHTN', 3:'GHTN'})
+    sns.boxplot(df_, x=xval, y=yval, showfliers=False, saturation=0.9, palette=palette, order = ['HC','PW','GHTN','CHTN'], linecolor="black")#,'EOPE', 'LOPE'
+    sns.stripplot(df_, x=xval, y=yval,color='black' , marker="$\circ$", alpha = 0.2, edgecolor='k', linewidth=0.6, order = ['HC','PW','GHTN','CHTN'], jitter=0.2, size=4)
+    annotator = Annotator(ax = ax, data = df_, x = xval, y = yval, pairs = [('HC','GHTN'), ('PW','GHTN'),('HC','CHTN'), ('PW','CHTN')], order = ['HC','PW','GHTN','CHTN'])
+    annotator.hide_non_significant=True
+    annotator.configure(test="Mann-Whitney", verbose=False,line_height=0.02, text_offset=-2,text_format='star',use_fixed_offset=10)
+
+    annotator.apply_test()
+
+    annotator.annotate(line_offset_to_group=0.01)
+
+    ax.tick_params(axis='y', which='major', labelsize=9)
+    ax.set_xlabel('')
+    ax.set_ylabel(name_map[yval])
+
+    if len(file_name)>0:
+        fig.savefig(f'figures/{file_name}.pdf', transparent=True, dpi=300, bbox_inches='tight')   
+    else:
+        fig.savefig(f'figures/fig4_{yval}_color.pdf', transparent=True, dpi=300, bbox_inches='tight')
+
+def prepare_feature_catalog(
+    case_file, control_file, clinical_file,
+    id_regex=r"(cu\d{4})", average=True, feature_folder="all_features", pre="all", post=""
+):
+    """
+    Loads all tables, builds subject-level aggregates, merges clinical/bins, defines feature groups:
+      - dfs, ks_dfs, pca_dfs (lists of feature *names*)
+      - dfs_map, ks_dfs_map, pca_dfs_map (name -> DataFrame)
+      - dfs_set, ks_dfs_set, pca_dfs_set (sets of names)
+      - df_use (with labels)
+    """
+
+    # base labels / subject filtering 
+    df_results_all = pd.read_csv(os.path.join(feature_folder, f"{pre}_graph_feats_processed{post}.csv"))
+    df_results_all['id'] = df_results_all['id'].astype(str).str.lower()
+
+
+    with open(case_file, "rb") as f:
+        case_group = pickle.load(f)
+
+    with open(control_file, "rb") as f:
+        control_group = pickle.load(f)
+
+    case_group = [x.lower() for x in case_group]
+    control_group = [x.lower() for x in control_group]
+
+    # df_use = df_results_all[df_results_all['id'].isin(case_group + control_group)].copy()
+    df_use = df_results_all.copy()
+    df_use['label'] = df_use['id'].apply(lambda x: 1 if x in case_group else 0)
+    df_use = df_use.dropna()
+
+    # load features
+    graph_feats = df_use.copy()
+
+    bins_feats = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_old_processed{post}.csv"))
+    bins_feats['id'] = bins_feats['file_name'].str.extract(id_regex)[0]
+
+    clinical_feats = pd.read_csv(clinical_file, index_col=0)
+    clinical_feats['Study ID'] = clinical_feats['Study ID'].str.lower()
+
+    box_counting_df = pd.read_csv(os.path.join(feature_folder, f"{pre}_box_counting{post}.csv"))
+    tda_vr          = pd.read_csv(os.path.join(feature_folder, f"{pre}_tda_VR{post}.csv"))
+    tda_inward      = pd.read_csv(os.path.join(feature_folder, f"{pre}_tda_inward{post}.csv"))
+    tda_outward     = pd.read_csv(os.path.join(feature_folder, f"{pre}_tda_outward{post}.csv"))
+    tda_flooding    = pd.read_csv(os.path.join(feature_folder, f"{pre}_tda_flooding{post}.csv"))
+
+    tree_feats_len_top        = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_lengths_top{post}.csv"))
+    tree_feats_len_real_top   = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_lengths_real_top{post}.csv"))
+    tree_feats_conductivity_top = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_conductivity_top{post}.csv"))
+    tree_feats_len_bottom     = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_lengths_bottom{post}.csv"))
+    tree_feats_len_real_bottom = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_lengths_real_bottom{post}.csv"))
+    tree_feats_conductivity_bottom = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_conductivity_bottom{post}.csv"))
+
+    old_tree_feats_len       = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_old_lengths{post}.csv"))
+    old_tree_feats_assymetry = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_old_Asymmetry{post}.csv"))
+    old_tree_feats_diameter  = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_old_diameters{post}.csv"))
+
+    # processed_dan_tree_feats = pd.read_csv(os.path.join(feature_folder, f"all_t1_tree_feats_dan_processed.csv")) ## need to be changed if using new!
+    processed_dan_tree_feats = pd.read_csv(os.path.join(feature_folder, f"{pre}_tree_feats_processed{post}.csv")) 
+
+
+    graph_feats = graph_feats.merge(processed_dan_tree_feats, left_on='file_name', right_on='index', how='outer')
+    bins_feats = graph_feats.merge(bins_feats, on='file_name', suffixes=['dan',''])
+
+    clinical_feats['id'] = clinical_feats['Study ID'].str.lower()
+    clinical_feats['file_name'] = clinical_feats['id']
+    clinical_feats['label'] = [1 if x in case_group else 0 for x in clinical_feats['id']]
+
+
+
+    # column groups 
+    required = ['file_name', 'label', 'id']
+
+    bifurc_ratio_feats    = [f'bifurc_ratio_{n}' for n in range(2, 4)]
+    strahler_order_feats  = [f'strahler_order_counts_{n}' for n in range(1, 6)]
+    graph_cols            = ['num_nodes','num_components','n_edge_nodes','n_branches','direct_dist']
+    tort_cols             = ['sinuosity_all','dic_tort','tort_density','linreg_tort','sq_curvature_tortuosity','abs_curvature_tortuosity']
+    complexity_cols       = ['loops','fds']
+    asym_feats            = ['avg_asymmetry','sum_asymmetry','q25_asymmetry','q50_asymmetry','q75_asymmetry','q100_asymmetry']
+    cum_size_dist_feats   = ['avg_cumulative_size_dist','sum_cumulative_size_dist','q25_cumulative_size_dist','q50_cumulative_size_dist','q75_cumulative_size_dist','q100_cumulative_size_dist']
+    topo_lengths_feats    = ['avg_topo_length_top','avg_topo_length_bottom','median_topo_length_top','median_topo_length_bottom',
+                             'avg_topo_length_weight_top','avg_topo_length_weight_bottom','median_topo_length_weight_top','median_topo_length_weight_bottom']
+    topo_lengths_feats_dan= ['avg_topo_length_top_dan','avg_topo_length_bottom_dan','median_topo_length_top_dan','median_topo_length_bottom_dan',
+                             'avg_topo_length_weight_top_dan','avg_topo_length_weight_bottom_dan','median_topo_length_weight_top_dan','median_topo_length_weight_bottom_dan']
+    nest_num_feats        = ['nest_num_unw','nest_num_w','avg_nest_ratios','avg_nest_ratios_w','sum_nest_ratios','sum_nest_ratios_w']
+    nest_num_feats_dan    = ['nest_num_unw_dan','nest_num_w_dan','avg_nest_ratios_dan','avg_nest_ratios_w_dan','sum_nest_ratios_dan','sum_nest_ratios_w_dan']
+    tree_feats      = ['tree_depth','tree_leaves']
+    geom_feats            = ['vein_density_len','mean_vein_distances','mean_areole_area','areole_density']
+    angle_feats           = ['avg_angle','median_angle','sum_angle','beta']
+    angle_feats_dan       = ['avg_angle_dan','median_angle_dan','sum_angle_dan']
+    conductivity_feats    = ['avg_conductivities_top','median_conductivities_top','avg_conductivities_bottom','median_conductivities_bottom']
+    ratio_feats           = ['avg_topo_length_weight_topbottom_ratio','avg_topo_length_topbottom_ratio',
+                             'avg_conductivities_topbottom_ratio','median_conductivities_topbottom_ratio',
+                             'median_topo_length_weight_topbottom_ratio','median_topo_length_topbottom_ratio']
+    std_feats             = ['std_asymmetry','std_cumulative_size_dist','std_topo_length_top','std_topo_length_bottom',
+                             'std_topo_length_weight_top','std_topo_length_weight_bottom','std_conductivities_top','std_conductivities_bottom',
+                             'std_nest_ratios','std_nest_ratios_w','std_angle']
+    clinical_feats_base   = ['Age at enrollment','Current Smoker','Former Smoker','Past Preeclampsia','IVF','Maternal hispanic',
+                             'Maternal Race_Asian','Maternal Race_Black','Maternal Race_Multiracial','Maternal Race_Other',
+                             'Maternal Race_Unknown','Maternal Race_White']
+    clinical_feats_extra2 = ['ama_custom','Past Gestational HTN','Past Gestational diabetes','Past Hypertension']
+    clinical_feats_extra = ['ama', 'gestationaldiabetes', 'obesity', 'aspirin', 'bp_meds', 'insulin']
+
+    all_clinical_feats = ['Age at enrollment','Current Smoker','Former Smoker','Past Preeclampsia','Past Gestational HTN','Past Gestational diabetes','Past Hypertension',
+                          'IVF','Maternal hispanic','Maternal Race_Asian','Maternal Race_Black','Maternal Race_Multiracial','Maternal Race_Other',
+                             'Maternal Race_Unknown','Maternal Race_White', 'obesity']
+    
+    fmf_clinical_feats = ['Age at enrollment', 'Current Smoker', 'Past Preeclampsia',
+       'IVF', 'Insulin?', 'Maternal hispanic',
+       'Maternal Race_Asian', 'Maternal Race_Black',
+       'Maternal Race_Multiracial', 'Maternal Race_Other',
+       'Maternal Race_Unknown', 'Maternal Race_White',
+       'Cardiac Hypertensive Disease', 'Diabetes_type1', 'Diabetes_type2',
+       'Past Gestational diabetes', 'Past Preterm Labor', 'nulliparous']
+    
+    mixed_feat_set = ['n_branches','direct_dist','sq_curvature_tortuosity','loops','fds','avg_topo_length_top_dan','avg_topo_length_bottom_dan']
+    # clinical_feats_extra2 = ['ama', 'obesity', 'Diabetes', 'Past Gestational HTN', 'Past Gestational diabetes', 'Past Hypertension']
+
+    # append required
+    def add_req(lst): return lst + required
+    graph_cols              = add_req(graph_cols)
+    tort_cols               = add_req(tort_cols)
+    complexity_cols         = add_req(complexity_cols)
+    asym_feats              = add_req(asym_feats)
+    cum_size_dist_feats     = add_req(cum_size_dist_feats)
+    bifurc_ratio_feats      = add_req(bifurc_ratio_feats)
+    strahler_order_feats    = add_req(strahler_order_feats)
+    topo_lengths_feats      = add_req(topo_lengths_feats)
+    topo_lengths_feats_dan  = add_req(topo_lengths_feats_dan)
+    nest_num_feats          = add_req(nest_num_feats)
+    nest_num_feats_dan      = add_req(nest_num_feats_dan)
+    tree_feats        = add_req(tree_feats)
+    geom_feats              = add_req(geom_feats)
+    angle_feats             = add_req(angle_feats)
+    angle_feats_dan         = add_req(angle_feats_dan)
+    conductivity_feats      = add_req(conductivity_feats)
+    ratio_feats             = add_req(ratio_feats)
+    clinical_feats_base     = add_req(clinical_feats_base)
+    clinical_feats_extra2   = add_req(clinical_feats_extra2)
+    clinical_feats_extra   = add_req(clinical_feats_extra)
+    all_clinical_feats   = add_req(all_clinical_feats)
+    fmf_clinical_feats   = add_req(fmf_clinical_feats)
+    std_feats               = add_req(std_feats)
+    mixed_feat_set = add_req(mixed_feat_set)
+
+    # subject-level aggregation (average)
+    file_name_to_use = set(df_use['file_name'].unique())
+    ids_to_use = set(df_use['id'].unique())
+
+    box_counting_df = average_by_subject(box_counting_df, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tda_vr          = average_by_subject(tda_vr, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tda_inward      = average_by_subject(tda_inward, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tda_outward     = average_by_subject(tda_outward, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tda_flooding    = average_by_subject(tda_flooding, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    graph_feats     = average_by_subject(graph_feats, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    old_tree_feats_len       = average_by_subject(old_tree_feats_len, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    old_tree_feats_assymetry = average_by_subject(old_tree_feats_assymetry, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    old_tree_feats_diameter  = average_by_subject(old_tree_feats_diameter, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tree_feats_len_top       = average_by_subject(tree_feats_len_top, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tree_feats_len_real_top  = average_by_subject(tree_feats_len_real_top, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tree_feats_conductivity_top = average_by_subject(tree_feats_conductivity_top, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tree_feats_len_bottom    = average_by_subject(tree_feats_len_bottom, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tree_feats_len_real_bottom = average_by_subject(tree_feats_len_real_bottom, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    tree_feats_conductivity_bottom = average_by_subject(tree_feats_conductivity_bottom, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    processed_dan_tree_feats = average_by_subject(processed_dan_tree_feats, filename_to_use=file_name_to_use, id_regex=id_regex, average=average)
+    processed_dan_tree_feats['label'] = processed_dan_tree_feats['id'].apply(lambda x: 1 if x in case_group else 0)   
+
+
+    dfs = [
+        'graph_feats[mixed_feat_set]','graph_feats[graph_cols]','graph_feats[tort_cols]','graph_feats[complexity_cols]',
+        'bins_feats[asym_feats]','bins_feats[cum_size_dist_feats]','bins_feats[bifurc_ratio_feats]',
+        'bins_feats[strahler_order_feats]','bins_feats[topo_lengths_feats]',
+        'processed_dan_tree_feats[topo_lengths_feats_dan]','bins_feats[nest_num_feats]',
+        'processed_dan_tree_feats[nest_num_feats_dan]','bins_feats[tree_feats]',
+        'bins_feats[geom_feats]',
+        'processed_dan_tree_feats[angle_feats_dan]','bins_feats[conductivity_feats]',
+        'bins_feats[ratio_feats]','bins_feats[std_feats]',
+        'clinical_feats[all_clinical_feats]'
+    ]
+    ks_dfs  = ['tree_feats_len_top','tree_feats_len_real_top','tree_feats_conductivity_top',
+               'tree_feats_len_bottom','tree_feats_len_real_bottom','tree_feats_conductivity_bottom',
+               'old_tree_feats_len','old_tree_feats_assymetry','old_tree_feats_diameter']
+    pca_dfs = ['box_counting_df','tda_vr','tda_inward','tda_outward','tda_flooding']
+
+    # dataframes by base name
+    frames = {
+        'graph_feats': graph_feats,
+        'processed_dan_tree_feats': processed_dan_tree_feats,
+        'bins_feats': bins_feats,
+        'box_counting_df': box_counting_df,
+        'tda_vr': tda_vr,
+        'tda_inward': tda_inward,
+        'tda_outward': tda_outward,
+        'tda_flooding': tda_flooding,
+        'tree_feats_len_top': tree_feats_len_top,
+        'tree_feats_len_real_top': tree_feats_len_real_top,
+        'tree_feats_conductivity_top': tree_feats_conductivity_top,
+        'tree_feats_len_bottom': tree_feats_len_bottom,
+        'tree_feats_len_real_bottom': tree_feats_len_real_bottom,
+        'tree_feats_conductivity_bottom': tree_feats_conductivity_bottom,
+        'old_tree_feats_len': old_tree_feats_len,
+        'old_tree_feats_assymetry': old_tree_feats_assymetry,
+        'old_tree_feats_diameter': old_tree_feats_diameter,
+        'clinical_feats':clinical_feats
+    }
+    # column groups by feature set name
+    colsets = {
+        'mixed_feat_set':mixed_feat_set,'graph_cols': graph_cols, 'tort_cols': tort_cols, 'complexity_cols': complexity_cols,
+        'asym_feats': asym_feats, 'cum_size_dist_feats': cum_size_dist_feats,
+        'bifurc_ratio_feats': bifurc_ratio_feats, 'strahler_order_feats': strahler_order_feats,
+        'topo_lengths_feats': topo_lengths_feats, 'topo_lengths_feats_dan': topo_lengths_feats_dan,
+        'nest_num_feats': nest_num_feats, 'nest_num_feats_dan': nest_num_feats_dan,
+        'tree_feats': tree_feats, 'geom_feats': geom_feats,
+        'angle_feats': angle_feats, 'angle_feats_dan': angle_feats_dan,
+        'conductivity_feats': conductivity_feats, 'ratio_feats': ratio_feats,
+        'std_feats': std_feats,
+        'all_clinical_feats': all_clinical_feats
+    }
+
+    # Build maps consistent with string keys you already use
+    dfs_map = {}
+    for name in dfs:
+        if '[' in name:        # e.g., 'graph_feats[graph_cols]'
+            base, cols = name.split('[', 1)
+            base = base.strip()
+            cols = cols.rstrip(']').strip()
+            dfs_map[name] = frames[base][colsets[cols]].copy()
+        else:
+            dfs_map[name] = frames[name].copy()
+
+    ks_dfs_map  = {name: frames[name].copy() for name in ks_dfs}
+    pca_dfs_map = {name: frames[name].copy() for name in pca_dfs}
+
+    df_use = df_use[['id','label']].drop_duplicates()
+
+    return {
+        "df_use": df_use,
+        "dfs": dfs, "ks_dfs": ks_dfs, "pca_dfs": pca_dfs,
+        "dfs_map": dfs_map, "ks_dfs_map": ks_dfs_map, "pca_dfs_map": pca_dfs_map,
+        "dfs_set": set(dfs), "ks_dfs_set": set(ks_dfs), "pca_dfs_set": set(pca_dfs),
+    }
+
+
+# create binary column in metadata from column that hold list of diseases per subject
+def create_disease_binary_columns(df, disease_column):
+    df = df.copy()
+    # Ensure the disease column is processed as a list if it's a string
+    if df[disease_column].dtype == 'object':
+        # Split string if diseases are comma-separated
+        df[disease_column] = df[disease_column].str.replace(' ', '', regex=False).str.split(',').apply(
+            lambda x: [i.strip() for i in x] if isinstance(x, list) else []
+        )
+    
+    # Get unique diseases across all rows
+    all_diseases = set()
+    for diseases in df[disease_column]:
+        if isinstance(diseases, list):
+            all_diseases.update(diseases)
+    
+    # Create binary columns for each disease
+    for disease in sorted(all_diseases):
+        column_name = f'{disease.lower().replace(" ", "_")}'
+        df[disease_column+'_'+column_name] = df[disease_column].apply(
+            lambda x: 1 if disease in x else 0
+        )
+    
+    return df
+
+def prepare_clinical_file(md):
+    md['Study ID'] = md['Study ID'].str.lower()
+    # fill it in if there is a date
+    md.loc[md['Date of Hypertension Diagnosis'].notna() & md['Diagnoses, Maternal, Hypertension'].isna(), 'Diagnoses, Maternal, Hypertension'] = 'temp_hypertension'
+    md.loc[md['Diagnoses, Maternal, Hypertension, Preeclampsia'].notna() & md['Diagnoses, Maternal, Hypertension'].isna(), 'Diagnoses, Maternal, Hypertension'] = 'temp_hypertension'
+
+
+    # create df with binary disease columns
+    md_df = md[['Study ID','Medical Diagnoses','Cardiac Disease','Has the patient had any eye surgery in the past five years?','Diagnoses, Maternal','Diagnoses, Maternal, Hypertension','Diagnoses, Maternal, Gestational Diabetes',
+                'Aspirin?','Statin?','BP meds?','Insulin?','Diagnoses, Maternal, Gestational Diabetes, A2','Tobacco Use']]
+
+    md_df = md_df.rename(columns={'Medical Diagnoses':'med_diag','Cardiac Disease':'card','Has the patient had any eye surgery in the past five years?':'eye_surg','Diagnoses, Maternal':'diag_mat',
+                        'Diagnoses, Maternal, Hypertension':'diag_mat_ht', 'Diagnoses, Maternal, Gestational Diabetes':'diag_mat_gd','Diagnoses, Maternal, Gestational Diabetes, A2':'diag_mat_gd_a2'})
+
+    md_df = create_disease_binary_columns(md_df,'med_diag').drop('med_diag', axis=1).drop('med_diag_nonereported',axis=1)
+    md_df = create_disease_binary_columns(md_df,'card').drop('card', axis=1)
+    md_df = create_disease_binary_columns(md_df,'eye_surg').drop('eye_surg',axis=1).drop('eye_surg_none', axis=1)
+    md_df = create_disease_binary_columns(md_df,'diag_mat').drop('diag_mat',axis=1)
+    md_df = create_disease_binary_columns(md_df,'diag_mat_ht').drop('diag_mat_ht',axis=1)
+    md_df = create_disease_binary_columns(md_df,'diag_mat_gd').drop('diag_mat_gd',axis=1)
+    md_df = create_disease_binary_columns(md_df,'Aspirin?').drop('Aspirin?',axis=1).drop('Aspirin?_no',axis=1)
+    md_df = create_disease_binary_columns(md_df,'Statin?').drop('Statin?',axis=1).drop('Statin?_no',axis=1)
+    md_df = create_disease_binary_columns(md_df,'Insulin?').drop('Insulin?',axis=1).drop('Insulin?_no',axis=1)
+    md_df = create_disease_binary_columns(md_df,'BP meds?').drop('BP meds?',axis=1).drop('BP meds?_no',axis=1)
+    md_df = create_disease_binary_columns(md_df,'Tobacco Use').drop('Tobacco Use',axis=1)
+
+    md_select = md.merge(md_df,on='Study ID')[['Study ID','Age at enrollment','Tobacco Use_currentsmoker','Tobacco Use_formersmoker','Past Pregnancies Diagnoses, Maternal, Hypertension','diag_mat_ivf','Maternal Ethnicity','Maternal Race',
+    'Cardiac Disease','diag_mat_ama','med_diag_obesity','Diabetes Mellitus','Past Pregnancies Diagnoses, Maternal, Hypertension','Past Pregnancies Diagnoses, Maternal']]
+
+    md_select = md_select.rename(columns={'Tobacco Use_currentsmoker':'Current Smoker','Tobacco Use_formersmoker':'Former Smoker',
+                                        'diag_mat_ivf':'IVF','diag_mat_ama':'ama','med_diag_obesity':'obesity'})
+    md_select = md_select.loc[:, ~md_select.columns.duplicated()]
+    # display(md_select)
+    # display(md_select['Past Preeclampsia'])
+    md_select['Past Preeclampsia'] = md_select['Past Pregnancies Diagnoses, Maternal, Hypertension'].apply(lambda x: 1 if x=='Preeclampsia' else 0)
+    md_select['Maternal hispanic'] = md_select['Maternal Ethnicity'].map({
+        'Hispanic or Latinx': 1,
+        'NOT Hispanic or Latinx': 0,
+        'Unknown / Not Reported / Undefined / Declined': -1
+    })
+    md_select['Race_Grouped'] = md_select['Maternal Race'].replace({
+        "Asian,Black or African American": "Multiracial",
+        "Asian": "Asian",
+        "White": "White",
+        "Unknown / Not Reported / Undefined / Declined": "Unknown",
+        "Black or African American": "Black",
+        "Native Hawaiian or Other Pacific Islander": "Other",
+        "American Indian/Alaska Native": "Other"
+    })
+    md_select = pd.get_dummies(md_select, columns=['Race_Grouped'], prefix='Maternal Race')
+    md_select['Cardiac Hypertensive Disease'] = md_select['Cardiac Disease'].astype(str).str.contains('Hypertensive Disease', case=False, na=False).astype(int)
+    md_select['ama_custom'] = (md_select['Age at enrollment'] > 35.).astype(int)
+    md_select['Diabetes'] = md_select['Diabetes Mellitus'].isin(['Type I','Type II']).astype(int)
+    md_select['Past Gestational HTN'] = md_select['Past Pregnancies Diagnoses, Maternal, Hypertension'].isin(['Gestational HTN']).astype(int)
+    md_select['Past Gestational diabetes'] = md_select['Past Pregnancies Diagnoses, Maternal'].astype(str).str.contains('Gestational diabetes').astype(int)
+    md_select['Past Hypertension'] = md_select['Past Pregnancies Diagnoses, Maternal'].astype(str).str.contains('Hypertension').astype(int)
+    md_select = md_select.drop(['Maternal Ethnicity','Maternal Race','Cardiac Disease','Diabetes Mellitus','Past Pregnancies Diagnoses, Maternal, Hypertension','Past Pregnancies Diagnoses, Maternal'],axis=1)
+
+    return(md_select)
+
+def prepare_clinical_file_fmf(md):
+    md['Study ID'] = md['Study ID'].str.lower()
+    # fill it in if there is a date
+    md.loc[md['Date of Hypertension Diagnosis'].notna() & md['Diagnoses, Maternal, Hypertension'].isna(), 'Diagnoses, Maternal, Hypertension'] = 'temp_hypertension'
+    md.loc[md['Diagnoses, Maternal, Hypertension, Preeclampsia'].notna() & md['Diagnoses, Maternal, Hypertension'].isna(), 'Diagnoses, Maternal, Hypertension'] = 'temp_hypertension'
+
+
+    # create df with binary disease columns
+    md_df = md[['Study ID','Medical Diagnoses','Cardiac Disease','Has the patient had any eye surgery in the past five years?','Diagnoses, Maternal','Diagnoses, Maternal, Hypertension','Diagnoses, Maternal, Gestational Diabetes',
+                'Aspirin?','Statin?','BP meds?','Insulin?','Diagnoses, Maternal, Gestational Diabetes, A2','Tobacco Use']]
+
+    md_df = md_df.rename(columns={'Medical Diagnoses':'med_diag','Cardiac Disease':'card','Has the patient had any eye surgery in the past five years?':'eye_surg','Diagnoses, Maternal':'diag_mat',
+                        'Diagnoses, Maternal, Hypertension':'diag_mat_ht', 'Diagnoses, Maternal, Gestational Diabetes':'diag_mat_gd','Diagnoses, Maternal, Gestational Diabetes, A2':'diag_mat_gd_a2'})
+
+    md_df = create_disease_binary_columns(md_df,'med_diag').drop('med_diag', axis=1).drop('med_diag_nonereported',axis=1)
+    md_df = create_disease_binary_columns(md_df,'card').drop('card', axis=1)
+    md_df = create_disease_binary_columns(md_df,'eye_surg').drop('eye_surg',axis=1).drop('eye_surg_none', axis=1)
+    md_df = create_disease_binary_columns(md_df,'diag_mat').drop('diag_mat',axis=1)
+    md_df = create_disease_binary_columns(md_df,'diag_mat_ht').drop('diag_mat_ht',axis=1)
+    md_df = create_disease_binary_columns(md_df,'diag_mat_gd').drop('diag_mat_gd',axis=1)
+    md_df = create_disease_binary_columns(md_df,'Aspirin?').drop('Aspirin?',axis=1).drop('Aspirin?_no',axis=1)
+    md_df = create_disease_binary_columns(md_df,'Statin?').drop('Statin?',axis=1).drop('Statin?_no',axis=1)
+    md_df = create_disease_binary_columns(md_df,'Insulin?').drop('Insulin?',axis=1).drop('Insulin?_no',axis=1)
+    md_df = create_disease_binary_columns(md_df,'BP meds?').drop('BP meds?',axis=1).drop('BP meds?_no',axis=1)
+    md_df = create_disease_binary_columns(md_df,'Tobacco Use').drop('Tobacco Use',axis=1)
+
+    md_select = md.merge(md_df,on='Study ID')[['Study ID','Age at enrollment','Tobacco Use_currentsmoker','Past Pregnancies Diagnoses, Maternal, Hypertension, Preeclampsia','diag_mat_ivf','Maternal Ethnicity','Maternal Race',
+    'Cardiac Disease','Diabetes Mellitus','Past Pregnancies Diagnoses, Maternal, Hypertension','Past Pregnancies Diagnoses, Maternal','EDD by ultrasound','Term Births', 'Preterm Births','Insulin?']]
+
+    md_select = md_select.rename(columns={'Tobacco Use_currentsmoker':'Current Smoker','Past Pregnancies Diagnoses, Maternal, Hypertension, Preeclampsia':'Past Preeclampsia','diag_mat_ivf':'IVF'})
+    md_select['Past Preeclampsia'] = md_select['Past Preeclampsia'].apply(lambda x: 0 if x not in ['without severe features', 'with severe features'] else 1)
+    md_select['Maternal hispanic'] = md_select['Maternal Ethnicity'].map({
+        'Hispanic or Latinx': 1,
+        'NOT Hispanic or Latinx': 0,
+        'Unknown / Not Reported / Undefined / Declined': -1
+    })
+    md_select['Race_Grouped'] = md_select['Maternal Race'].replace({
+        "Asian,Black or African American": "Multiracial",
+        "Asian": "Asian",
+        "White": "White",
+        "Unknown / Not Reported / Undefined / Declined": "Unknown",
+        "Black or African American": "Black",
+        "Native Hawaiian or Other Pacific Islander": "Other",
+        "American Indian/Alaska Native": "Other"
+    })
+    md_select = pd.get_dummies(md_select, columns=['Race_Grouped'], prefix='Maternal Race')
+    md_select['Cardiac Hypertensive Disease'] = md_select['Cardiac Disease'].astype(str).str.contains('Hypertensive Disease', case=False, na=False).astype(int)
+    md_select['Diabetes_type1'] = md_select['Diabetes Mellitus'].isin(['Type I']).astype(int)
+    md_select['Diabetes_type2'] = md_select['Diabetes Mellitus'].isin(['Type II']).astype(int)
+    md_select['Insulin?'] = md_select['Insulin?'].apply(lambda x: 1 if x=='Yes' else 0)
+    md_select['Past Gestational diabetes'] = md_select['Past Pregnancies Diagnoses, Maternal'].astype(str).str.contains('Gestational diabetes').astype(int)
+    md_select['Past Preterm Labor'] = md_select['Past Pregnancies Diagnoses, Maternal'].astype(str).str.contains('Preterm labor').astype(int)
+    md_select['nulliparous'] = ((md_select['Term Births'] == 0) & (md_select['Preterm Births'] == 0)).astype(int)
+    md_select = md_select.drop(['Maternal Ethnicity','Maternal Race','Cardiac Disease','Diabetes Mellitus','Past Pregnancies Diagnoses, Maternal, Hypertension','Past Pregnancies Diagnoses, Maternal','Term Births', 'Preterm Births'],axis=1)
+
+    return(md_select)
+
+
+
+def get_vals(md, col, sets, get_sd=False, round_to=3, compare_to='pw_controls'):
+    subj_means = {}
+    subj_sds = {}
+    subj_vals = {}
+
+    for subj_set in sets.keys():
+        subjects = sets[subj_set]
+        subset = md[md['Study ID'].str.lower().isin(subjects)][col].dropna()
+        mean_val = subset.mean()
+        sd_val = subset.std()
+
+        subj_means[subj_set] = mean_val
+        subj_sds[subj_set] = sd_val
+        subj_vals[subj_set] = subset
+
+        if get_sd:
+            print(f"{subj_set}: {mean_val:.{round_to}f} ± {sd_val:.{round_to}f}")
+        else:
+            print(f"{subj_set}: {mean_val:.{round_to}f}")
+
+
+    # Compare each group against the pw_controls group
+    for subj_set in sets.keys():
+        if subj_set not in ['cohort', 'pw_controls', 'clean controls']:
+            group_vals = subj_vals[subj_set]
+            control_vals = subj_vals[compare_to]
+
+            # Independent t-test (assumes unequal variances by default)
+            t_stat, p_val = mannwhitneyu(group_vals, control_vals, nan_policy='omit')
+
+            print(f"{subj_set} vs {compare_to}: t = {t_stat:.3f}, p = {p_val}")
+
+
+def get_vals_count_card(md, col, sets, get_sd=False, compare_to='pw_controls'):
+    subj_counts = {}
+    subj_total = {}
+
+    for subj_set, subjects in sets.items():
+        subset = md[md['Study ID'].str.lower().isin(subjects)]
+        subset = subset[subset['Cardiac Disease'].str.lower().str.contains(col, na=False)]
+        count_val = len(subset)
+        perc = (count_val / len(subjects)) * 100 if len(subjects) > 0 else 0
+        print(f"{subj_set}: {count_val} ({perc:.1f}%)")
+
+        subj_counts[subj_set] = count_val
+        subj_total[subj_set] = len(subjects)
+
+    for subj_set in sets.keys():
+        if subj_set not in ['cohort','pw_controls','clean controls']:
+
+            table = pd.DataFrame({
+                "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
+                "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
+            }, index=["PEC", "Controls"])
+            chi2, p, dof, expected = chi2_contingency(table)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
+def get_vals_past_pec(md, col, sets, get_sd=False, compare_to='pw_controls'):
+    subj_counts = {}
+    subj_total = {}
+    for subj_set, subjects in sets.items():
+        subset = md[md['Study ID'].str.lower().isin(subjects)]
+        subset = subset[subset['Past Pregnancies Diagnoses, Maternal, Hypertension']=='Preeclampsia']
+        count_val = len(subset)
+        perc = (count_val / len(subjects)) * 100 if len(subjects) > 0 else 0
+        print(f"{subj_set}: {count_val} ({perc:.1f}%)")
+
+        subj_counts[subj_set] = count_val
+        subj_total[subj_set] = len(subjects)
+
+    for subj_set in sets.keys():
+        if subj_set not in ['cohort','pw_controls','clean controls']:
+
+            table = pd.DataFrame({
+                "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
+                "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
+            }, index=["PEC", "Controls"])
+            chi2, p, dof, expected = chi2_contingency(table)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
+def get_vals_count_smoker(md, col, sets, get_sd=False, compare_to='pw_controls'):
+    subj_counts = {}
+    subj_total = {}
+    for subj_set, subjects in sets.items():
+        subset = md[md['Study ID'].str.lower().isin(subjects)]
+        subset = subset[(subset['Tobacco Use']=='Current Smoker') | (subset['Tobacco Use']=='Former Smoker')]
+        count_val = len(subset)
+        perc = (count_val / len(subjects)) * 100 if len(subjects) > 0 else 0
+        print(f"{subj_set}: {count_val} ({perc:.1f}%)")
+
+        subj_counts[subj_set] = count_val
+        subj_total[subj_set] = len(subjects)
+
+    for subj_set in sets.keys():
+        if subj_set not in ['cohort','pw_controls','clean controls']:
+
+            table = pd.DataFrame({
+                "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
+                "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
+            }, index=["PEC", "Controls"])
+            chi2, p, dof, expected = chi2_contingency(table)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
+def get_vals_count_ethnicity(md, col, sets, get_sd=False, compare_to='pw_controls'):
+    subj_counts = {}
+    subj_total = {}
+    for subj_set, subjects in sets.items():
+        subset = md[md['Study ID'].str.lower().isin(subjects)]
+        subset = subset[subset['Maternal Ethnicity']=='Hispanic or Latinx']
+        count_val = len(subset)
+        perc = (count_val / len(subjects)) * 100 if len(subjects) > 0 else 0
+        print(f"{subj_set}: {count_val} ({perc:.1f}%)")
+
+        subj_counts[subj_set] = count_val
+        subj_total[subj_set] = len(subjects)
+
+    for subj_set in sets.keys():
+        if subj_set not in ['cohort','pw_controls','clean controls']:
+
+            table = pd.DataFrame({
+                "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
+                "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
+            }, index=["PEC", "Controls"])
+            chi2, p, dof, expected = chi2_contingency(table)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
+
+def get_vals_count_db(md, col, sets, get_sd=False, compare_to='pw_controls'):
+    subj_counts = {}
+    subj_total = {}
+    for subj_set, subjects in sets.items():
+        subset = md[md['Study ID'].str.lower().isin(subjects)]
+        subset = subset[subset['Diabetes Mellitus'].isna()==False]
+        count_val = len(subset)
+        perc = (count_val / len(subjects)) * 100 if len(subjects) > 0 else 0
+        print(f"{subj_set}: {count_val} ({perc:.1f}%)")
+
+        subj_counts[subj_set] = count_val
+        subj_total[subj_set] = len(subjects)
+
+    for subj_set in sets.keys():
+        if subj_set not in ['cohort','pw_controls','clean controls']:
+
+            table = pd.DataFrame({
+                "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
+                "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
+            }, index=["PEC", "Controls"])
+            chi2, p, dof, expected = chi2_contingency(table)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
+def get_vals_count_diagmat(md, col, sets, get_sd=False, compare_to='pw_controls'):
+    subj_counts = {}
+    subj_total = {}
+    for subj_set, subjects in sets.items():
+        subset = md[md['Study ID'].str.lower().isin(subjects)]
+        subset = subset[subset['Diagnoses, Maternal'].str.lower().str.contains(col, na=False)]
+        count_val = len(subset)
+        perc = (count_val / len(subjects)) * 100 if len(subjects) > 0 else 0
+        print(f"{subj_set}: {count_val} ({perc:.1f}%)")
+
+        subj_counts[subj_set] = count_val
+        subj_total[subj_set] = len(subjects)
+
+    for subj_set in sets.keys():
+        if subj_set not in ['cohort','pw_controls','clean controls']:
+
+            table = pd.DataFrame({
+                "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
+                "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
+            }, index=["PEC", "Controls"])
+            chi2, p, dof, expected = chi2_contingency(table)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
+def get_vals_count_meddiag(md, col, sets, get_sd=False, compare_to='pw_controls'):
+    subj_counts = {}
+    subj_total = {}
+    for subj_set, subjects in sets.items():
+        subset = md[md['Study ID'].str.lower().isin(subjects)]
+        subset = subset[subset['Medical Diagnoses'].str.lower().str.contains(col, na=False)]
+        count_val = len(subset)
+        perc = (count_val / len(subjects)) * 100 if len(subjects) > 0 else 0
+        print(f"{subj_set}: {count_val} ({perc:.1f}%)")
+
+        subj_counts[subj_set] = count_val
+        subj_total[subj_set] = len(subjects)
+
+    for subj_set in sets.keys():
+        if subj_set not in ['cohort','pw_controls','clean controls']:
+
+            table = pd.DataFrame({
+                "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
+                "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
+            }, index=["PEC", "Controls"])
+            chi2, p, dof, expected = chi2_contingency(table)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
+def get_vals_count_np(md, col, sets, get_sd=False, compare_to='pw_controls'):
+    subj_counts = {}
+    subj_total = {}
+    for subj_set, subjects in sets.items():
+        subset = md[md['Study ID'].str.lower().isin(subjects)]
+        subset = subset[subset['Living Children']==0]
+        count_val = len(subset)
+        perc = (count_val / len(subjects)) * 100 if len(subjects) > 0 else 0
+        print(f"{subj_set}: {count_val} ({perc:.1f}%)")
+
+        subj_counts[subj_set] = count_val
+        subj_total[subj_set] = len(subjects)
+
+    for subj_set in sets.keys():
+        if subj_set not in ['cohort','pw_controls','clean controls']:
+
+            table = pd.DataFrame({
+                "Has Disease": [subj_counts[subj_set], subj_counts[compare_to]],
+                "No Disease": [subj_total[subj_set] - subj_counts[subj_set], subj_total[compare_to] - subj_counts[compare_to]]
+            }, index=["PEC", "Controls"])
+            chi2, p, dof, expected = chi2_contingency(table)
+            print(f"{subj_set} vs {compare_to} Chi-square p-value = {p}")
+
+
+
+def get_bmi(df: pd.DataFrame, weight_col: str, height_col: str) -> pd.DataFrame:
+    df['bmi'] = df[weight_col]/(df[height_col]**2)
+    return(df)
+
+def proc_birth_hx(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    def parse(x):
+        if pd.isna(x):
+            return np.nan
+        if isinstance(x, str):
+            if 'healthy' in x.lower():
+                return(0)
+            elif 'pe' in x.lower():
+                return(1)     
+            elif 'gdm' in x.lower():
+                return(2)
+            elif 'ghtn' in x.lower():
+                return(3)
+               
+        
+    df[col] = df[col].apply(parse)
+    df['Past Preeclampsia'] = df[col].apply(lambda x: 1 if x==1 else 0)
+    df['Past Gestational HTN'] = df[col].apply(lambda x: 1 if x==3 else 0)
+    df['Past Gestational diabetes'] = df[col].apply(lambda x: 1 if x==2 else 0)
+    
+    return df
+
+def proc_on_yes(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    def parse(x):
+        if pd.isna(x):
+            return np.nan
+        if isinstance(x, str):
+            if 'yes' in x.lower():
+                return(1)
+            else:
+                return(0)
+        
+    df[col] = df[col].apply(parse)
+    return df  
+
+def proc_on_no(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    def parse(x):
+        if pd.isna(x):
+            return np.nan
+        if isinstance(x, str):
+            if 'no' in x.lower():
+                return(0)
+            else:
+                return(1)
+        
+    df[col] = df[col].apply(parse)
+    return df
+
+def proc_smoker(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    df[col] = df[col].apply(lambda x: 1 if 'former' in x.lower() else 0)
+    return df
+
+def proc_db(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    
+    def parse(x):
+        if pd.isna(x):
+            return np.nan
+        if isinstance(x, str):
+            if '1' in x:
+                return 1
+            elif '2' in x:
+                return 1 # NOT INTERESTED IN TYPES
+            else:
+                return 0
+        
+    df[col] = df[col].apply(parse)
+#     df['Diabetes_type1'] = df[col].apply(lambda x: 1 if x==1 else 0)
+#     df['Diabetes_type2'] = df[col].apply(lambda x: 1 if x==2 else 0)
+    return(df)
+
+def proc_conception(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    df['IVF'] = df[col].apply(lambda x: 1 if 'ivf' in x.lower() and 'natural' not in x.lower() else 0)
+    return df    
+
+def compare_binary_col(
+    nyu_md,
+    col,
+    controls_ids,
+    group_ids,
+    id_col="Record ID"
+):
+    """
+    Parameters
+    ----------
+    nyu_md : DataFrame
+    col : str
+        Binary column to compare.
+    controls_ids : list
+        IDs for controls.
+    group_ids : dict
+        Dict of group_name -> list_of_ids.
+    """
+    ids = nyu_md[id_col].str.lower()
+    controls = nyu_md[ids.isin(controls_ids)]
+    control_yes = int(controls[col].sum())
+    control_no = len(controls) - control_yes
+    print(f"\n=== {col} ===")
+    print(f"controls: {control_yes}/{len(controls)} "
+          f"({control_yes/len(controls):.3f})")
+    results = []
+    for group_name, group_list in group_ids.items():
+        df = nyu_md[ids.isin(group_list)]
+        yes = int(df[col].sum())
+        no = len(df) - yes
+        prop = yes / len(df)
+
+        odds_ratio, pval = fisher_exact([
+            [control_yes, control_no],
+            [yes, no]
+        ])
+
+        print(f"{group_name}: {yes}/{len(df)} ({prop:.3f}) pval: {pval}")
+        results.append({
+            "group": group_name,
+            "n": len(df),
+            "count": yes,
+            "proportion": prop,
+            "odds_ratio": odds_ratio,
+            "pvalue": pval
+        })
+    return pd.DataFrame(results)
+
+
+def compare_continuous_col(
+    nyu_md,
+    col,
+    controls_ids,
+    group_ids,
+    id_col="Record ID",
+    test="mannwhitney"  # "ttest" or "mannwhitney"
+):
+    """
+    Compare a continuous column between control and each group.
+
+    Parameters
+    ----------
+    nyu_md : DataFrame
+    col : str
+        Continuous column to compare.
+    controls_ids : list
+        IDs for controls.
+    group_ids : dict
+        Dict of group_name -> list_of_ids.
+    id_col : str
+    test : str
+        "ttest" (Welch's t-test) or "mannwhitney".
+    """
+    ids = nyu_md[id_col].str.lower()
+
+    control_vals = nyu_md.loc[ids.isin(controls_ids), col].dropna()
+
+    print(f"\n=== {col} ===")
+    print(f"controls: n={len(control_vals)}, "
+          f"mean={control_vals.mean():.3f}, "
+          f"median={control_vals.median():.3f}, "
+          f"sd={control_vals.std():.3f}")
+
+    results = []
+    for group_name, group_list in group_ids.items():
+        group_vals = nyu_md.loc[ids.isin(group_list), col].dropna()
+
+        if test == "ttest":
+            stat, pval = ttest_ind(
+                control_vals, group_vals, equal_var=False  # Welch's
+            )
+        elif test == "mannwhitney":
+            stat, pval = mannwhitneyu(
+                control_vals, group_vals, alternative="two-sided"
+            )
+        else:
+            raise ValueError("test must be 'ttest' or 'mannwhitney'")
+
+        print(f"{group_name}: n={len(group_vals)}, "
+              f"mean={group_vals.mean():.3f}, "
+              f"median={group_vals.median():.3f}, "
+              f"sd={group_vals.std():.3f}, "
+              f"pval: {pval}")
+
+        results.append({
+            "group": group_name,
+            "n": len(group_vals),
+            "mean": group_vals.mean(),
+            "median": group_vals.median(),
+            "sd": group_vals.std(),
+            "statistic": stat,
+            "pvalue": pval,
+            "test": test,
+        })
+
+    return pd.DataFrame(results)
+
+def classification_metrics(cases_pos, cases_neg, controls_pos, controls_neg):
+    """
+    Compute classification metrics from case/control predicted counts.
+ 
+    Parameters
+    ----------
+    cases_pos    : int | float  — cases predicted positive    (True Positives)
+    cases_neg    : int | float  — cases predicted negative    (False Negatives)
+    controls_pos : int | float  — controls predicted positive (False Positives)
+    controls_neg : int | float  — controls predicted negative (True Negatives)
+ 
+    Returns
+    -------
+    dict with keys:
+        TP, FP, TN, FN,
+        TPR  (sensitivity / recall),
+        FPR  (fall-out),
+        PPV  (precision),
+        NPV,
+        F1
+    """
+    TP = cases_pos
+    FN = cases_neg
+    FP = controls_pos
+    TN = controls_neg
+ 
+    TPR = TP / (TP + FN) if (TP + FN) > 0 else float("nan")   # sensitivity
+    FPR = FP / (FP + TN) if (FP + TN) > 0 else float("nan")   # fall-out
+    PPV = TP / (TP + FP) if (TP + FP) > 0 else float("nan")   # precision
+    NPV = TN / (TN + FN) if (TN + FN) > 0 else float("nan")
+    F1  = (2 * PPV * TPR) / (PPV + TPR) if (PPV + TPR) > 0 else float("nan")
+ 
+    return {
+        "TP":  TP,
+        "FP":  FP,
+        "TN":  TN,
+        "FN":  FN,
+        "TPR": TPR,   # sensitivity / recall
+        "FPR": FPR,
+        "PPV": PPV,   # precision
+        "NPV": NPV,
+        "F1":  F1,
+    }
+
+        
+def strings_to_na(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
+
+
+def gest_age_to_days(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """
+    Convert gestational age strings like '12w1d', '9w', '3d'
+    into total days as a numeric column.
+    Invalid or missing values -> NaN.
+    """
+    pattern = re.compile(r'^\s*(?:(\d+)\s*w)?\s*(?:(\d+)\s*d)?\s*$', re.I)
+
+    def parse(x):
+        if pd.isna(x):
+            return np.nan
+        if isinstance(x, (int, float)):
+            return x  # already numeric (assume days)
+        
+        if ' ' in x:
+            x = x.split(' ')[0]
+        m = pattern.match(str(x))
+        if not m:
+            return np.nan
+        weeks = int(m.group(1)) if m.group(1) else 0
+        days = int(m.group(2)) if m.group(2) else 0
+        return weeks * 7 + days
+    
+    df = df.copy()
+
+    df[col] = df[col].apply(parse).astype('float')
+    return df
+
+
+def datetime_to_day_index(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """
+    Convert a datetime column into integer days since the earliest date.
+    Earliest date -> 0, next day -> 1, etc.
+    """
+    # Ensure datetime
+    dt = pd.to_datetime(df[col], errors='coerce')
+
+    # Normalize to date (drop time-of-day)
+    dt = dt.dt.normalize()
+
+    # Compute day index
+    df[col] = (dt - dt.min()).dt.days
+
+    return df
+
+
+def process_ethnicity(eth: str):
+    """
+    Parse a free-text ethnicity string into:
+    - race: White / Black / Asian / Multiracial / Other / Unknown
+    - ethnicity: hispanic / not hispanic
+    """
+    if not isinstance(eth, str) or not eth.strip():
+        return "Unknown", "not hispanic"
+
+    s = eth.lower()
+    
+    if eth == 'laotian':
+        return('asian', 'not hispanic')
+
+    races = ['white', 'black', 'asian']
+    found = [r for r in races if r in s]
+
+    # Determine race
+    if len(found) > 1:
+        race = 'Multiracial'
+    elif len(found) == 1:
+        race = found[0].capitalize()
+    else:
+        race = 'Other'
+
+    # Determine ethnicity
+    if 'hispanic' in s and 'not' not in s:
+        ethnicity = 'hispanic'
+    else:
+        ethnicity = 'not hispanic'
+
+    return race, ethnicity
+
+
+def add_ethnicity_binaries(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """
+    From a free-text ethnicity column, add binary columns:
+    White, Black, Asian, Multiracial, Hispanic
+    """
+    parsed = df[col].apply(process_ethnicity)
+    parsed_df = pd.DataFrame(parsed.tolist(), columns=['race', 'ethnicity'], index=df.index)
+
+    race = parsed_df['race'].fillna('').str.lower()
+    ethnicity = parsed_df['ethnicity'].fillna('').str.lower()
+
+    df['Maternal Race_White'] = (race == 'white').astype(int)
+    df['Maternal Race_Black'] = (race == 'black').astype(int)
+    df['Maternal Race_Asian'] = (race == 'asian').astype(int)
+    df['Maternal Race_Multiracial'] = (race == 'multiracial').astype(int)
+    df['Maternal Race_Other'] = (~race.isin(['white', 'black', 'asian', 'multiracial'])).astype(int)
+
+    df['Maternal hispanic'] = (ethnicity == 'hispanic').astype(int)
+
+    return df
+
+def get_ama(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    df['ama'] = (df[col] > 35.).astype(int)
+    df['ama_custom'] = (df[col] > 35.).astype(int)
+    return(df)
