@@ -1,5 +1,9 @@
 # Visionary AI for Hypertensive Disorders of Pregnancy
 
+## Description
+
+Visionary AI predicts HDPs, including PEC, GHTN, CHTN, from retinal images during the first trimester of pregnancy.
+
 ## Repo Structure
 ```
 Visionary-AI-HDP/                               repo
@@ -38,11 +42,11 @@ Visionary-AI-HDP/                               repo
 │   │   ├── supplementary_table_5.ipynb
 │   │   ├── supplementary_table_6.ipynb
 │   │   └── supplementary_table_7.ipynb        uses env1
-│   └── utils/                                  code utilities
+│   └── utils/                                 code utilities
 │       └── utils.py
-├── env/                                        environment requirement files
+├── env/                                       environment requirement files
 │   ├── env1.yml
 │   └── env1.txt
-└── README.md                                   info on repo
+└── README.md                                  info on repo
 ```
 
