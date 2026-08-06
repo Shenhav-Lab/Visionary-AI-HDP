@@ -70,23 +70,36 @@ def roc_helper(column_start, all_data, n_points, ci_type, add_col, pw=10):
     return mean_fpr, mean_tpr, mean_auc, std_auc, lower, upper
 
 
-def plot_avg_roc_from_dicts(all_data, title, color="black", n_points=100, ci_type='95ci', add_col=[], plot=True, pw=10, rand=False):
+def plot_avg_roc_from_dicts(all_data, title='', color="black", n_points=100, ci_type='95ci', 
+                            add_col=[], plot=True, pw=10, rand=False, 
+                            x_ticks=True, y_ticks=True, x_label=True, y_label=True):
+    # retinal
     label = ""
     mean_fpr, mean_tpr, mean_auc, std_auc, lower, upper = roc_helper("pw", all_data, n_points, ci_type, add_col, pw)
     if plot:
         plt.fill_between(mean_fpr, lower, upper, color=color, alpha=0.2, label=label)
-        plt.plot(mean_fpr, mean_tpr, color=color,
-                label=f'{title} (AUC = {mean_auc:.2f} ± {std_auc:.2f})', lw=2)
+        if len(title)>0:
+            plt.plot(mean_fpr, mean_tpr, color=color,
+                    label=f'{title} (AUC = {mean_auc:.2f} ± {std_auc:.2f})', lw=2)
+        else:
+            plt.plot(mean_fpr, mean_tpr, color=color,
+                    label=f'AUC = {mean_auc:.2f} ± {std_auc:.2f}', lw=2)            
 
         ax = plt.gca()
         if rand:
-            plt.plot([0, 1], [0, 1], linestyle='--', color='grey', label="Random (AUC = 0.5)")
+            plt.plot([0, 1], [0, 1], linestyle='--', color='grey', label="Rand (AUC = 0.5)")
         plt.xlim(0, 1)
         plt.ylim(0.00000001, 1)
-        plt.xlabel('False Positive Rate (1- Specificity)', fontsize=font_size)
-        plt.ylabel('True Positive Rate (Sensitivity)', fontsize=font_size)
+        if x_label:
+            plt.xlabel('FPR', fontsize=font_size) #False Positive Rate (1- Specificity)
+        if y_label:
+            plt.ylabel('TPR', fontsize=font_size) #True Positive Rate (Sensitivity)
         plt.title(title)
         ax.tick_params(labelsize=font_size)
+        if not x_ticks:
+            ax.set_xticklabels([])
+        if not y_ticks:
+            ax.set_yticklabels([])
         plt.legend(loc='lower right', fontsize=(font_size-2))
         plt.grid(True, alpha=0.3)
     return mean_auc
@@ -131,27 +144,47 @@ def pr_helper(column_start, all_data, n_points, ci_type, add_col, pw=10):
     return mean_recall, mean_precision, mean_ap, std_ap, lower, upper
 
 
-def plot_avg_pr_from_dicts(all_data, title, color="black", n_points=100, ci_type='95ci', add_col=[], plot=True, pw=10, rand=False):
+
+def plot_avg_pr_from_dicts(all_data, title='', color="black", n_points=100, ci_type='95ci', 
+                           add_col=[], plot=True, pw=10, rand=False,
+                           x_ticks=True, y_ticks=True, x_label=True, y_label=True):
+    # retinal
     label = ""
     mean_recall, mean_precision, mean_ap, std_ap, lower, upper = pr_helper("pw", all_data, n_points, ci_type, add_col, pw)
     if plot:
         plt.fill_between(mean_recall, lower, upper, color=color, alpha=0.2, label=label)
-        plt.plot(mean_recall, mean_precision, color=color,
-                label=f'{title} (AP = {mean_ap:.2f} ± {std_ap:.2f})', lw=2)
+        if len(title)>0:
+            plt.plot(mean_recall, mean_precision, color=color,
+                    label=f'{title} (AP = {mean_ap:.2f} ± {std_ap:.2f})', lw=2)
+        else:
+            plt.plot(mean_recall, mean_precision, color=color,
+                    label=f'AP = {mean_ap:.2f} ± {std_ap:.2f}', lw=2)
 
         ax = plt.gca()
+        if x_label:
+            plt.xlabel('Recall', fontsize=font_size) #Recall (Sensitivity)
+        if y_label:
+            plt.ylabel('Precision', fontsize=font_size) #Precision (PPV)
 
-        plt.xlabel('Recall (Sensitivity)', fontsize=font_size)
         plt.xlim(0, 1)
         plt.ylim(0.00000001, 1)
-        plt.ylabel('Precision (PPV)', fontsize=font_size)
+
         plt.title(title)
         # pos / (avg num pw controls + hc + pos)
         if rand:
             val = sum(list(all_data['label'])) / ((len(all_data) - len(all_data[all_data["label"] == 0].dropna()) - sum(list(all_data['label']))) / pw + len(all_data[all_data["label"] == 0].dropna()) + sum(list(all_data['label'])))
-            plt.axhline(val, linestyle='--', color='grey', label=f"Random (AP = {val:.2f})")
-        plt.legend(loc='lower left', fontsize=(font_size - 2))
+            if title == "GHTN":
+                plt.axhline(val, linestyle='--', color='grey', label=f"GHTN Random (AP = {val:.2f})")
+            elif title == "CHTN":
+                plt.axhline(val, linestyle='-', color='grey', label=f"CHTN Random (AP = {val:.2f})")
+            else:
+                plt.axhline(val, linestyle='-', color='grey', label=f"Rand (AP = {val:.2f})")
+        plt.legend(loc='lower left', fontsize=(font_size-2))
         ax.tick_params(labelsize=font_size)
+        if not x_ticks:
+            ax.set_xticklabels([])
+        if not y_ticks:
+            ax.set_yticklabels([])
         plt.grid(True, alpha=0.3)
     return mean_ap
 
@@ -244,49 +277,71 @@ def get_metrics(label, prob):
     return df
 
 
-def get_test_roc(label, prob, color="black", curve_label="", rand=False):
+def get_test_roc(label, prob, color="black", curve_label="", rand=False, 
+                            x_ticks=True, y_ticks=True, x_label=True, y_label=True):
     label = np.array(label)
     prob = np.array(prob)
-    
-    auc = roc_auc_score(label, prob)
-    
+
+    auroc = roc_auc_score(label, prob)
+
     # roc
     fpr_curve, tpr_curve, _ = roc_curve(label, prob)
     plt.xlim(0, 1)
     plt.ylim(0.00000001, 1)
-    plt.xlabel('False Positive Rate (1- Specificity)', fontsize=font_size)
-    plt.ylabel('True Positive Rate (Sensitivity)', fontsize=font_size)
+    if x_label:
+        plt.xlabel('FPR', fontsize=font_size)#False Positive Rate (1- Specificity)
+    if y_label:
+        plt.ylabel('TPR', fontsize=font_size)#True Positive Rate (Sensitivity)
     plt.grid(True, alpha=0.3)
-    plt.plot(fpr_curve, tpr_curve, color=color, lw=2, label=f'{curve_label} (AUC = {auc:.2f})')
+    if len(curve_label)>0:
+        plt.plot(fpr_curve, tpr_curve, color=color, lw=2, label=f'{curve_label} (AUC = {auroc:.2f})')
+    else:
+        plt.plot(fpr_curve, tpr_curve, color=color, lw=2, label=f'AUC = {auroc:.2f}')
     if rand:
-        plt.plot([0, 1], [0, 1], linestyle='--', color='grey', label="Random (AUC = 0.5)")  
-    plt.legend(loc='lower right', fontsize=(font_size-2))
+        plt.plot([0, 1], [0, 1], linestyle='--', color='grey', label="Rand (AUC = 0.5)")
     ax = plt.gca()
     ax.tick_params(axis='both',labelsize=font_size)
-    return auc
+    if not x_ticks:
+        ax.set_xticklabels([])
+    if not y_ticks:
+        ax.set_yticklabels([])
+    plt.legend(loc='lower right', fontsize=(font_size-2))
+    return auroc
 
 
-def get_test_pr(label, prob, color="black", curve_label="", rand=False):
+
+def get_test_pr(label, prob, color="black", curve_label="", rand=False,
+                x_ticks=True, y_ticks=True, x_label=True, y_label=True):
     label = np.array(label)
     prob = np.array(prob)
-    
+
     ap = average_precision_score(label, prob)
-    
+
     # roc
     fpr_curve, tpr_curve, _ = roc_curve(label, prob)
     precision_curve, recall_curve, _ = precision_recall_curve(label, prob)
-    plt.plot(recall_curve, precision_curve, color=color, lw=2, label=f'{curve_label} (AP = {ap:.2f})')
+    if len(curve_label)>0:
+        plt.plot(recall_curve, precision_curve, color=color, lw=2, label=f'{curve_label} (AP = {ap:.2f})')
+    else:
+        plt.plot(recall_curve, precision_curve, color=color, lw=2, label=f'AP = {ap:.2f}')
     baseline = label.sum() / len(label)
     if rand:
-        plt.axhline(y=baseline, color='grey', lw=1, linestyle='--', label=f'Random (AP = {baseline:.2f})')
-    plt.xlabel('Recall (Sensitivity)', fontsize=font_size)
+        plt.axhline(y=baseline, color='grey', lw=1, linestyle='--', label=f'Rand (AP = {baseline:.2f})')
+    if x_label:
+        plt.xlabel('Recall', fontsize=font_size) #Recall (Sensitivity)
+    if y_label:
+        plt.ylabel('Precision', fontsize=font_size) #Precision (PPV)
     plt.xlim(0, 1)
     plt.ylim(0.00000001, 1)
-    plt.ylabel('Precision (PPV)', fontsize=font_size)
-    plt.grid(True, alpha=0.3)
-    plt.legend(loc='lower left', fontsize=(font_size-2))
+
     ax = plt.gca()
     ax.tick_params(axis='both',labelsize=font_size)
+    if not x_ticks:
+        ax.set_xticklabels([])
+    if not y_ticks:
+        ax.set_yticklabels([])
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc='lower left', fontsize=(font_size-2))
     return ap
 
 
@@ -790,7 +845,7 @@ def box_plot(input_df, name_map, pw_ids,pec_ids,clean_controls, get_mean=False, 
     df_ = remove_outliers_iqr(df, [yval])[0]
     df_[xval] = df_[xval].replace({0: 'HC', 1:'PEC', 2:'PW'})#, 3:'EOPE', 4:'LOPE'
     sns.boxplot(df_, x=xval, y=yval, showfliers=False, saturation=0.9, palette=palette,hue=xval, order = ['HC','PW', 'PEC'], linecolor="black")
-    sns.stripplot(df_, x=xval, y=yval,color='black' , marker="$\circ$", alpha = 0.2, edgecolor='k', linewidth=0.6, order = ['HC','PW', 'PEC'], jitter=0.2, size=4)
+    sns.stripplot(df_, x=xval, y=yval,color='black' , marker="$\\circ$", alpha = 0.2, edgecolor='k', linewidth=0.6, order = ['HC','PW', 'PEC'], jitter=0.2, size=4)
 
     annotator = Annotator(ax = ax, data = df_, x = xval, y = yval, pairs = [('HC','PEC'), ('PW','PEC')], order = ['HC','PW', 'PEC'])
     annotator.hide_non_significant=True
@@ -844,7 +899,7 @@ def box_plot_hdp(input_df, name_map, pw_ids,ght_cases,cht_cases,clean_controls, 
     df_ = remove_outliers_iqr(df, [yval])[0]
     df_[xval] = df_[xval].replace({0: 'HC', 1:'PW', 2:'CHTN', 3:'GHTN'})
     sns.boxplot(df_, x=xval, y=yval, showfliers=False, saturation=0.9, palette=palette,hue=xval, order = ['HC','PW','GHTN','CHTN'], linecolor="black")#,'EOPE', 'LOPE'
-    sns.stripplot(df_, x=xval, y=yval,color='black' , marker="$\circ$", alpha = 0.2, edgecolor='k', linewidth=0.6, order = ['HC','PW','GHTN','CHTN'], jitter=0.2, size=4)
+    sns.stripplot(df_, x=xval, y=yval,color='black' , marker="$\\circ$", alpha = 0.2, edgecolor='k', linewidth=0.6, order = ['HC','PW','GHTN','CHTN'], jitter=0.2, size=4)
     annotator = Annotator(ax = ax, data = df_, x = xval, y = yval, pairs = [('HC','GHTN'), ('PW','GHTN'),('HC','CHTN'), ('PW','CHTN')], order = ['HC','PW','GHTN','CHTN'])
     annotator.hide_non_significant=True
     annotator.configure(test="Mann-Whitney", verbose=False,line_height=0.02, text_offset=-2,text_format='star',use_fixed_offset=10)
